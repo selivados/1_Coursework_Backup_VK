@@ -1,14 +1,13 @@
-import requests
-import time
 import json
 import os
 import shutil
+import time
+
+import requests
 from tqdm import tqdm
-from tokens import vk_token
 
 
 class VKontakte:
-
     url = 'https://api.vk.com/method/'
 
     def __init__(self, token):
@@ -26,37 +25,32 @@ class VKontakte:
             'extended': 1,
             'count': count
         }
-        data = requests.get(request_url, params={**self.params, **params}).json()['response']['items']
-        return data
+        response = requests.get(request_url, params={**self.params, **params}).json()
+        return response['response']['items']
 
     def get_all_photos(self, user_id):
         request_url = self.url + 'photos.getAll'
+        photos = []
+        offset = 0
         count = 200
-        params = {
-            'owner_id': user_id,
-            'extended': 1,
-            'count': count
-        }
-        data = requests.get(request_url, params={**self.params, **params}).json()
-        fotos_count = data['response']['count']
-        offset = count
-        while offset < fotos_count:
+        while True:
             params = {
                 'owner_id': user_id,
                 'extended': 1,
                 'offset': offset,
                 'count': count
             }
-            data_new = requests.get(request_url, params={**self.params, **params}).json()
-            for item in data_new['response']['items']:
-                data['response']['items'].append(item)
+            response = requests.get(request_url, params={**self.params, **params}).json()
+            photos.extend(response['response']['items'])
+            photos_total_count = response['response']['count']
+            if offset + count >= photos_total_count:
+                break
             offset += count
             time.sleep(0.33)
-        return data['response']['items']
+        return photos
 
 
 class YandexDisk:
-
     url = 'https://cloud-api.yandex.net/v1/disk/'
 
     def __init__(self, token):
@@ -67,19 +61,16 @@ class YandexDisk:
 
     def _get_upload_url(self, yd_file_path):
         request_url = self.url + 'resources/upload'
-        params = {
-            'path': yd_file_path,
-            'overwrite': 'true'
-        }
-        upload_url = requests.get(request_url, headers=self.headers, params=params).json()['href']
-        return upload_url
+        params = {'path': yd_file_path}
+        response = requests.get(request_url, headers=self.headers, params=params).json()
+        return response['href']
 
     def _get_operation_status(self, status_link, time_sleep):
-        status = requests.get(status_link, headers=self.headers).json()['status']
-        while status == 'in-progress':
+        response = requests.get(status_link, headers=self.headers).json()
+        while response['status'] == 'in-progress':
             time.sleep(time_sleep)
-            status = requests.get(status_link, headers=self.headers).json()['status']
-        return status
+            response = requests.get(status_link, headers=self.headers).json()
+        return response['status']
 
     def create_folder(self, yd_folder_path):
         request_url = self.url + 'resources'
@@ -97,9 +88,10 @@ class YandexDisk:
         return response.status_code
 
     def upload_photos_from_pc_folder(self, pc_folder_path, yd_folder_path):
+        file_names = os.listdir(pc_folder_path)
         json_data = []
         count = 0
-        for file_name in tqdm(os.listdir(pc_folder_path), desc='Загрузка фотографий на Яндекс.Диск', ncols=100):
+        for file_name in tqdm(file_names, desc='Загрузка фотографий на Яндекс.Диск', ncols=100):
             status_code = self.upload_file_from_pc(
                 pc_file_path=f'{pc_folder_path}/{file_name}',
                 yd_file_path=f'{yd_folder_path}/{file_name[:-6]}.jpg'
@@ -111,7 +103,7 @@ class YandexDisk:
                 }
                 json_data.append(json_info)
                 count += 1
-        print(f"Количество загруженных фотографий на Яндекс.Диск: {count} из {len(os.listdir(pc_folder_path))}")
+        print(f'Количество загруженных фотографий на Яндекс.Диск: {count} из {len(file_names)}')
         return json_data
 
     def upload_photos_from_internet(self, photos, yd_folder_path):
@@ -120,12 +112,12 @@ class YandexDisk:
         count = 0
         for photo in tqdm(photos, desc='Загрузка фотографий на Яндекс.Диск', ncols=100):
             params = {
-                'url': photo['url'],
-                'path': f"{yd_folder_path}/{photo['file_name'][:-6]}.jpg"
+                'path': f"{yd_folder_path}/{photo['file_name'][:-6]}.jpg",
+                'url': photo['url']
             }
             response = requests.post(request_url, headers=self.headers, params=params).json()
-            status = self._get_operation_status(response['href'], 2)
-            if status == 'success':
+            operation_status = self._get_operation_status(response['href'], 2)
+            if operation_status == 'success':
                 json_info = {
                     'file_name': f"{photo['file_name'][:-6]}.jpg",
                     'size': photo['size']
@@ -137,7 +129,6 @@ class YandexDisk:
 
 
 class GoogleDrive:
-
     def __init__(self, token):
         self.headers = {
             'Authorization': f'Bearer {token}'
@@ -173,9 +164,10 @@ class GoogleDrive:
             return response.status_code
 
     def upload_photos_from_pc_folder(self, pc_folder_path, parent_folder_id):
+        file_names = os.listdir(pc_folder_path)
         json_data = []
         count = 0
-        for file_name in tqdm(os.listdir(pc_folder_path), desc='Загрузка фотографий на Google.Drive', ncols=100):
+        for file_name in tqdm(file_names, desc='Загрузка фотографий на Google.Drive', ncols=100):
             status_code = self.upload_file_from_pc(
                 pc_file_path=f'{pc_folder_path}/{file_name}',
                 file_name=f'{file_name[:-6]}.jpg',
@@ -188,29 +180,26 @@ class GoogleDrive:
                 }
                 json_data.append(json_info)
                 count += 1
-        print(f"Количество загруженных фотографий на Google.Drive: {count} из {len(os.listdir(pc_folder_path))}")
+        print(f'Количество загруженных фотографий на Google.Drive: {count} из {len(file_names)}')
         return json_data
 
 
 def select_max_size_photos(photos):
-    data = []
+    max_size_photos = []
     size_range = 'smxopqryzw'
     for photo in photos:
-        photo_info = None
-        index = -1
-        for size in photo['sizes']:
-            index_new = size_range.find(size['type'])
-            if index_new > index:
-                photo_info = {
-                    'likes_count': photo['likes']['count'],
-                    'date': photo['date'],
-                    'size': size['type'],
-                    'file_name': f"{photo['likes']['count']}_{photo['date']}_{size['type']}.jpg",
-                    'url': size['url']
-                }
-                index = index_new
-        data.append(photo_info)
-    return data
+        sorted_photo_sizes = sorted(photo['sizes'],
+                                    key=lambda size: size_range.index(size['type']))
+        max_size_photo = sorted_photo_sizes[-1]
+        photo_info = {
+            'likes_count': photo['likes']['count'],
+            'date': photo['date'],
+            'size': max_size_photo['type'],
+            'file_name': f"{photo['likes']['count']}_{photo['date']}_{max_size_photo['type']}.jpg",
+            'url': max_size_photo['url']
+        }
+        max_size_photos.append(photo_info)
+    return max_size_photos
 
 
 def create_pc_folder(pc_folder_path):
@@ -230,22 +219,23 @@ def delete_pc_folder(pc_folder_path):
 def download_photos_to_pc_folder(photos, pc_folder_path):
     count = 0
     for photo in tqdm(photos, desc='Загрузка фотографий на ПК', ncols=100):
-        image = requests.get(photo['url'])
-        if image.status_code == 200:
+        response = requests.get(photo['url'])
+        if response.status_code == 200:
             with open(f"{pc_folder_path}/{photo['file_name']}", 'wb') as file:
-                file.write(image.content)
+                file.write(response.content)
             count += 1
     print(f'Количество загруженных фотографий на ПК: {count} из {len(photos)}')
 
 
 def create_json_file(json_data, pc_file_path):
-    with open(pc_file_path, "w", encoding='utf-8') as file:
+    with open(pc_file_path, 'w', encoding='utf-8') as file:
         json.dump(json_data, file, indent=2)
 
 
 if __name__ == '__main__':
     vk_id = input('\nID пользователя ВКонтакте: ').strip()
     count = int(input('Количество фотографий для загрузки: '))
+    vk_token = input('Токен для доступа к ВКонтакте: ').strip()
     yd_token = input('Токен для доступа к Яндекс.Диску: ').strip()
     gd_token = input('Токен для доступа к Google.Drive: ').strip()
 
